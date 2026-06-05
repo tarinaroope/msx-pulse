@@ -1,0 +1,119 @@
+; cart_serve PIO programs (RP2350). Three SMs:
+;   PIO1 SM0  cart_addr_read   GPIOBASE=0,  reads GP0-15, pushes 32-bit LUT pointer
+;   PIO2 SM0  cart_read        GPIOBASE=16, owns the full read cycle
+;   PIO0 SM0  cart_addr_log    diagnostic capture, independent of the above
+
+; PIO1 SM0 — address reader, gated and lock-step with cart_read.
+;
+; Pushes one 32-bit LUT pointer per Z80 cart read cycle:
+;   high 16 = ((uintptr_t)rom_lut >> 16), preloaded into X at init
+;   low 16  = raw GP0-15, sampled while /SLTSL+/RD are both LOW
+; Autopush at 32 bits feeds RX FIFO -> DMA Ch A -> Ch B trigger.
+;
+; Gated like ALOG: wait /SLTSL LOW, filter writes/gaps via jmp_pin on /RD, push,
+; wait /RD HIGH. Exactly one push per cart read, matching cart_read's one
+; pull-block per cycle, so the pipeline stays in lock-step. The prologue above
+; wrap_target latches the LUT high half into X once.
+;
+; jmp_pin = GP24 (/RD).
+
+.program cart_addr_read
+    pull block               ; one-shot: TX FIFO = (rom_lut >> 16)
+    mov  x, osr              ; X = LUT high half (sticky for SM lifetime)
+.wrap_target
+sltsl_wait:
+    wait 0 gpio 29           ; /SLTSL LOW
+    jmp  pin sltsl_wait      ; /RD HIGH → re-check /SLTSL (skip writes/gaps)
+    in   x, 16               ; ISR[31:16] = LUT high half
+    in   pins, 16            ; ISR[15:0]  = raw GP0..15; autopush at 32
+    wait 1 gpio 24           ; /RD HIGH (end of THIS read cycle only)
+.wrap
+
+% c-sdk {
+static inline pio_sm_config cart_addr_read_program_get_default_config_custom(uint offset) {
+    pio_sm_config c = cart_addr_read_program_get_default_config(offset);
+    /* Shift LEFT so `in x, 16` then `in pins, 16` deposits X in high half
+     * and pins in low half. Autopush at 32. */
+    sm_config_set_in_shift(&c, false, true, 32);
+    sm_config_set_in_pins(&c, 0);             /* IN_BASE = GP0 */
+    sm_config_set_jmp_pin(&c, 24);            /* jmp pin = GP24 (/RD) */
+    return c;
+}
+%}
+
+; PIO2 SM0 — cart read responder. Owns the full Z80 read cycle in one SM:
+; wait /SLTSL LOW, filter /RD HIGH (writes/gaps), flip LVC_DIR to MCU->MSX,
+; set GP16-23 to output, pull the byte the DMA delivered, drive it on D0-D7,
+; wait /RD rising, then tristate and flip LVC_DIR back.
+;
+; /WAIT is never asserted. Verified on real hardware (2026-05-29) that the
+; PIO+DMA pipeline delivers the byte well before the Z80 latches at /RD rising
+; at MSX1 speeds (3.58 MHz, ~280 ns/cycle). Leaving /WAIT idle HIGH simplifies
+; the design and is a prerequisite for the spin-2 plan to drop the LVC245s on
+; the control lines. GP30 stays owned by this program as a mandatory side-set
+; output, driven HIGH every cycle, so firmware keeps exclusive control of /WAIT
+; and can go back to an asserting design if a faster MSX bus ever needs it.
+;
+; jmp_pin = GP24 (/RD). side-set = GP30 (/WAIT, idle HIGH). set pins = GP34 (LVC_DIR).
+
+.program cart_read
+.side_set 1
+.wrap_target
+wait_sltsl:
+    wait 0 gpio 29     side 1            ; /SLTSL LOW
+    jmp pin wait_sltsl side 1            ; /RD HIGH → loop (write/gap)
+    set pins, 0        side 1            ; LVC_DIR = LOW (drive D-bus)
+    mov osr, !null     side 1            ; OSR = 0xFFFFFFFF
+    out pindirs, 8     side 1            ; GP16-23 pindirs = OUTPUT
+    pull block         side 1            ; wait byte from DMA TX FIFO
+    out pins, 8        side 1 [1]        ; drive D0-D7; +1 cycle setup
+    nop                side 1            ; (slot kept for cycle pacing)
+    wait 1 gpio 24     side 1            ; wait /RD rising (cycle end)
+    mov osr, null      side 1            ; OSR = 0
+    out pindirs, 8     side 1            ; GP16-23 pindirs = INPUT (tristate)
+    set pins, 1        side 1            ; LVC_DIR = HIGH (back to receive)
+.wrap
+
+% c-sdk {
+static inline pio_sm_config cart_read_program_get_default_config_custom(uint offset) {
+    pio_sm_config c = cart_read_program_get_default_config(offset);
+    sm_config_set_out_shift(&c, true, false, 32);  /* shift right, NO autopull */
+    sm_config_set_out_pins(&c, 16, 8);             /* OUT_BASE = GP16, 8 pins */
+    sm_config_set_set_pins(&c, 34, 1);             /* SET_BASE = GP34 (LVC_DIR) */
+    sm_config_set_sideset_pins(&c, 30);            /* side-set = GP30 (/WAIT) */
+    sm_config_set_jmp_pin(&c, 24);                 /* jmp pin = GP24 (/RD) */
+    return c;
+}
+%}
+
+; PIO0 SM0 — ALOG diagnostic capture. Pushes a 32-bit GP0-31 snapshot of every
+; clean cart read cycle to the RX FIFO (DMA drains to a RAM ring).
+;
+; Sampling happens AFTER /RD rises, not at /RD falling, so cart_read has had
+; time to drive the data byte. The Z80 latches on /RD rising, so this captures
+; exactly what it saw. cart_read tristates the bus ~2 PIO cycles after /RD
+; rising and ALOG samples ~1 cycle after, so the bus is still driven at capture.
+; The `jmp pin` re-checks /SLTSL because it may have gone HIGH again between
+; reads inside the same /SLTSL window.
+;
+; jmp_pin = GP24 (/RD).
+
+.program cart_addr_log
+.wrap_target
+sltsl_wait:
+    wait 0 gpio 29               ; /SLTSL LOW
+    jmp  pin sltsl_wait          ; /RD HIGH → re-check /SLTSL (skips writes/gaps)
+    wait 1 gpio 24               ; /RD HIGH (Z80 just latched data)
+    in   pins, 32                ; capture GP0-31, autopush — sees the byte
+                                 ; Z80 actually read
+.wrap
+
+% c-sdk {
+static inline pio_sm_config cart_addr_log_program_get_default_config_custom(uint offset) {
+    pio_sm_config c = cart_addr_log_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, 0);                /* IN_BASE = GP0           */
+    sm_config_set_in_shift(&c, false, true, 32); /* shift-left, autopush@32 */
+    sm_config_set_jmp_pin(&c, 24);               /* jmp pin = GP24 (/RD)    */
+    return c;
+}
+%}

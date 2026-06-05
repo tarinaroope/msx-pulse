@@ -1,0 +1,47 @@
+; Boot phase detector capture (RP2350). Both SMs: IN_BASE=GP0, capture GP0-31.
+; Bit layout (per ipc.h): A0-15=[0:15], D0-7=[16:23], /RD=24 /WR=25 /MREQ=26
+; /IORQ=27 /M1=28 /SLTSL=29 (all control bits active LOW).
+;
+; We sample a few PIO cycles after the qualifier falls, so the address and (for
+; writes) the data byte have settled. Read data from these SMs isn't reliable —
+; it's latched at /RD rising — so phase-8 header bytes come from the alog ring
+; instead. BD_SAMPLE_DELAY is the settle delay in PIO cycles; 8 works on a real
+; V20, retune via the MSX-in-the-loop test if needed.
+
+.define PUBLIC BD_SAMPLE_DELAY 8
+
+; PIO0 SM1 — memory-cycle capture (gates on /MREQ = GP26).
+.program bd_mem_capture
+.wrap_target
+    wait 0 gpio 26                 ; /MREQ LOW (memory cycle begins)
+    nop [BD_SAMPLE_DELAY]          ; settle: address valid, write data settling
+    in   pins, 32                  ; capture GP0-31, autopush
+    wait 1 gpio 26                 ; /MREQ HIGH (one capture per cycle)
+.wrap
+
+% c-sdk {
+static inline pio_sm_config bd_mem_capture_program_get_default_config_custom(uint offset) {
+    pio_sm_config c = bd_mem_capture_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, 0);                 /* IN_BASE = GP0 */
+    sm_config_set_in_shift(&c, false, true, 32);  /* shift-left, autopush@32 */
+    return c;
+}
+%}
+
+; PIO0 SM2 — I/O-cycle capture (gates on /IORQ = GP27).
+.program bd_io_capture
+.wrap_target
+    wait 0 gpio 27                 ; /IORQ LOW (I/O cycle begins)
+    nop [BD_SAMPLE_DELAY]          ; settle (Z80 inserts a wait state in I/O)
+    in   pins, 32                  ; capture GP0-31, autopush
+    wait 1 gpio 27                 ; /IORQ HIGH
+.wrap
+
+% c-sdk {
+static inline pio_sm_config bd_io_capture_program_get_default_config_custom(uint offset) {
+    pio_sm_config c = bd_io_capture_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, 0);
+    sm_config_set_in_shift(&c, false, true, 32);
+    return c;
+}
+%}

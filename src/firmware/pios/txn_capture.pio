@@ -1,0 +1,21 @@
+; Passive capture of Z80 read transactions with valid data (RP2350).
+; IN_BASE=GP0, capture GP0-31. Bit layout (ipc.h): A0-15=[0:15], D0-7=[16:23],
+; /RD=24. Data is valid at /RD rising (the CPU latches it there), so we sample
+; exactly then, unlike the boot_capture phase SMs that sample early and read
+; 0xFF. Catches memory and I/O reads (both assert /RD); an I/O-read address
+; aliasing into a checkpoint is vanishingly unlikely (see txn_capture.c).
+.program txn_read_capture
+.wrap_target
+    wait 0 gpio 24                 ; /RD LOW  (a read is in progress)
+    wait 1 gpio 24                 ; /RD HIGH (rising — read data just latched)
+    in   pins, 32                  ; capture GP0-31, autopush
+.wrap
+
+% c-sdk {
+static inline pio_sm_config txn_read_capture_program_get_default_config_custom(uint offset) {
+    pio_sm_config c = txn_read_capture_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, 0);                 /* IN_BASE = GP0 */
+    sm_config_set_in_shift(&c, false, true, 32);  /* shift-left, autopush@32 (matches boot_capture) */
+    return c;
+}
+%}

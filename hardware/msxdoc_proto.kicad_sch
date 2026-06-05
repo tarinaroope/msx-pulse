@@ -1,0 +1,238 @@
+(kicad_sch
+	(version 20250114)
+	(generator "eeschema")
+	(generator_version "9.0")
+	(uuid "86e7a8f3-4d83-458f-85e9-ec77af02c3f5")
+	(paper "A3")
+	(title_block
+		(title "msxdoc")
+		(rev "0.1")
+	)
+	(lib_symbols)
+	(text "1% tolerance on ADC dividers"
+		(exclude_from_sim no)
+		(at 32.512 89.154 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+		(uuid "6ac6c22e-9c3b-4690-8d82-5fb9db9ba23e")
+	)
+	(sheet
+		(at 170.18 134.62)
+		(size 54.61 38.1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "00c14c49-50c6-44bb-8e1e-9a651c00de7f")
+		(property "Sheetname" "adc_power_rails"
+			(at 170.18 133.9084 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "adc_power_rails.kicad_sch"
+			(at 170.18 173.3046 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "msxdoc_proto"
+				(path "/86e7a8f3-4d83-458f-85e9-ec77af02c3f5"
+					(page "6")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 31.75 220.98)
+		(size 45.72 39.37)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "4c4dee17-dc0b-47fa-92a0-887d09486927")
+		(property "Sheetname" "bus_interface"
+			(at 31.75 220.2684 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "bus_interface.kicad_sch"
+			(at 31.75 260.9346 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "msxdoc_proto"
+				(path "/86e7a8f3-4d83-458f-85e9-ec77af02c3f5"
+					(page "2")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 78.74 132.08)
+		(size 60.96 41.91)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "835bb82b-6563-41ee-ae04-541ad0ffb110")
+		(property "Sheetname" "peripherals"
+			(at 78.74 131.3684 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "peripherals.kicad_sch"
+			(at 78.74 174.5746 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "msxdoc_proto"
+				(path "/86e7a8f3-4d83-458f-85e9-ec77af02c3f5"
+					(page "5")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 31.75 187.96)
+		(size 24.13 12.7)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "ca2acd3b-4003-4c05-a902-d39d6831dd47")
+		(property "Sheetname" "power"
+			(at 31.75 187.2484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "power.kicad_sch"
+			(at 31.75 201.2446 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "msxdoc_proto"
+				(path "/86e7a8f3-4d83-458f-85e9-ec77af02c3f5"
+					(page "4")
+				)
+			)
+		)
+	)
+	(sheet
+		(at 93.98 222.25)
+		(size 71.12 38.1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(stroke
+			(width 0.1524)
+			(type solid)
+		)
+		(fill
+			(color 0 0 0 0.0000)
+		)
+		(uuid "d5fffa52-224e-4fac-8903-6408c8be198f")
+		(property "Sheetname" "mcu"
+			(at 93.98 221.5384 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left bottom)
+			)
+		)
+		(property "Sheetfile" "mcu.kicad_sch"
+			(at 93.98 260.9346 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left top)
+			)
+		)
+		(instances
+			(project "msxdoc_proto"
+				(path "/86e7a8f3-4d83-458f-85e9-ec77af02c3f5"
+					(page "3")
+				)
+			)
+		)
+	)
+	(sheet_instances
+		(path "/"
+			(page "1")
+		)
+	)
+	(embedded_fonts no)
+)

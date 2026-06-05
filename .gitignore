@@ -1,0 +1,21 @@
+# Build output
+build/
+*.rom
+*.bin
+*.map
+*.lst
+*.sym
+
+# OS
+.DS_Store
+
+# KiCad
+*-backups/
+*.kicad_pro-bak
+*.kicad_sch-bak
+*.kicad_pcb-bak
+*.kicad_prl
+fp-info-cache
+*-cache.lib
+*.bak
+_autosave-*
