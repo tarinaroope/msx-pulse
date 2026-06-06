@@ -18,45 +18,9 @@ void boot_diag_classify_anomalies(const bus_probe_snapshot_t *s, uint32_t events
     r->anomaly_flags = f;
 }
 
-bool boot_diag_anomaly_is_fatal(uint16_t anomaly_flags) {
-    const uint16_t FATAL = (1u << ANOM_CLK_ABSENT) | (1u << ANOM_RESET_STUCK)
-                         | (1u << ANOM_NO_BUS_CYCLES);
-    return (anomaly_flags & FATAL) != 0u;
-}
-
 bool boot_diag_round_should_stop(uint16_t phase_flags, uint16_t anomaly_flags) {
-    if ((phase_flags & 0x1FFu) == 0x1FFu) return true;
-    return boot_diag_anomaly_is_fatal(anomaly_flags);
-}
-
-/* Fused verdict, checked top-down — first match wins. */
-boot_verdict_t boot_diag_verdict(const boot_diag_result_t *r) {
-    if (r->anomaly_flags & (1u << ANOM_CLK_ABSENT))    return VERDICT_CLOCK;
-    if (r->anomaly_flags & (1u << ANOM_RESET_STUCK))   return VERDICT_RESET;
-    if (r->anomaly_flags & (1u << ANOM_NO_BUS_CYCLES)) return VERDICT_CPU_OR_DECODE;
-    if (r->stuck_data_hi || r->stuck_data_lo)          return VERDICT_DATA_LINE;
-    if (r->bus_undriven)                               return VERDICT_ROM_NO_DRIVE;
-    if (r->cp_failed)                                  return VERDICT_ROM_DATA;
-    if (r->stuck_addr_mask)                            return VERDICT_ADDR_LINE;
-    if ((r->phase_flags & 0x1FFu) == 0x1FFu)           return VERDICT_OK;
-    if (r->first_missing == BP_SLOT_RAM_PROBE)         return VERDICT_RAM_PATH;
-    return VERDICT_BOOT_STALL;
-}
-
-const char *boot_diag_verdict_text(boot_verdict_t v) {
-    switch (v) {
-    case VERDICT_OK:            return "CPU/RAM/ROM/BASIC path OK (VDP/PSG/kbd not proven)";
-    case VERDICT_CLOCK:         return "Clock - crystal / clock gen / CPU clock pin";
-    case VERDICT_RESET:         return "Reset held - RC / Schmitt / short to GND";
-    case VERDICT_CPU_OR_DECODE: return "CPU not fetching - Z80 or addr-decode / ROM /CS";
-    case VERDICT_DATA_LINE:     return "Data line stuck - buffer (LVC245) or driving chip";
-    case VERDICT_ROM_NO_DRIVE:  return "Bus not driven - BIOS ROM / /CS / decode / cold joint";
-    case VERDICT_ROM_DATA:      return "BIOS ROM data wrong - ROM or data path";
-    case VERDICT_ADDR_LINE:     return "Address line stuck - line / address decode";
-    case VERDICT_RAM_PATH:      return "RAM visibility - slot/expansion or RAM (bit-map: future)";
-    case VERDICT_BOOT_STALL:    return "Boot stalled - see stall phase + diagnosis";
-    default:                    return "?";
-    }
+    (void)anomaly_flags;   /* topic 3: anomalies never halt the round */
+    return (phase_flags & 0x1FFu) == 0x1FFu;   /* stop early only on a clean complete boot */
 }
 
 const char *boot_diag_anomaly_name(boot_anomaly_t a) {
@@ -91,12 +55,66 @@ static int append_bits(char *buf, size_t buflen, int o, const char *pfx,
     return o;
 }
 
+/* "D3 D5 <hint>\n" for a bit mask; returns new offset. */
+static int append_cause_bits(char *buf, size_t buflen, int o, const char *letter,
+                             uint32_t mask, int nbits, const char *hint) {
+    if (!mask) return o;
+    for (int i = 0; i < nbits; i++)
+        if (mask & (1u << i)) o = appendf(buf, buflen, o, "%s%d ", letter, i);
+    return appendf(buf, buflen, o, "%s\n", hint);
+}
+
+int boot_diag_possible_causes(const boot_diag_result_t *r, char *buf, size_t buflen) {
+    if (!buf || buflen == 0) return 0;
+    int o = 0; buf[0] = '\0';
+    if (r->anomaly_flags & (1u << ANOM_CLK_ABSENT))
+        o = appendf(buf, buflen, o, "no clock - xtal / clock gen / CPU clk pin\n");
+    if (r->anomaly_flags & (1u << ANOM_CLK_OUT_OF_RANGE))
+        o = appendf(buf, buflen, o, "clock off-freq - xtal / clock gen\n");
+    if (r->anomaly_flags & (1u << ANOM_RESET_STUCK))
+        o = appendf(buf, buflen, o, "reset held - RC / Schmitt / short to GND\n");
+    if (r->anomaly_flags & (1u << ANOM_NO_BUS_CYCLES))
+        o = appendf(buf, buflen, o, "no bus cycles - Z80 or addr-decode / ROM /CS\n");
+    if (r->anomaly_flags & (1u << ANOM_WAIT_STUCK_LOW))
+        o = appendf(buf, buflen, o, "/WAIT low - wait-state source\n");
+    o = append_cause_bits(buf, buflen, o, "D", r->stuck_data_hi, 8, "stuck hi - buffer (LVC245) or driver");
+    o = append_cause_bits(buf, buflen, o, "D", r->stuck_data_lo, 8, "stuck lo - buffer (LVC245) or driver");
+    o = append_cause_bits(buf, buflen, o, "A", r->stuck_addr_mask, 16, "stuck - line or address decode");
+    if (r->bus_undriven)
+        o = appendf(buf, buflen, o, "bus not driven - BIOS ROM / /CS / decode / cold joint\n");
+    if (r->cp_failed)
+        o = appendf(buf, buflen, o, "opcode mismatch 0x%02X - ROM or data path\n", r->cp_failed);
+    if (o == 0) {
+        if ((r->phase_flags & 0x1FFu) == 0x1FFu)
+            o = appendf(buf, buflen, o,
+                "boot reached cart-scan; CPU/RAM/ROM/BASIC path exercised (VDP/PSG/kbd not proven)\n");
+        else {
+            const char *ph = (r->first_missing >= 0 && r->first_missing < BP_PHASE_COUNT)
+                ? boot_phase_short_name((boot_phase_t)r->first_missing) : "?";
+            o = appendf(buf, buflen, o, "boot stalled before %s; see Phases\n", ph);
+        }
+    }
+    return o;
+}
+
 int boot_diag_format_report(const boot_diag_result_t *r, char *buf, size_t buflen) {
     if (!buf || buflen == 0) return 0;
     int o = 0;
     o = appendf(buf, buflen, o, "Passive boot diagnostic (%u pass%s)\n\n",
                 (unsigned)r->passes_run, r->passes_run == 1u ? "" : "es");
-    o = appendf(buf, buflen, o, "VERDICT: %s\n\n", boot_diag_verdict_text(r->verdict));
+    o = appendf(buf, buflen, o, "Possible causes:\n");
+    {
+        char causes[400];
+        boot_diag_possible_causes(r, causes, sizeof(causes));
+        const char *p = causes;
+        while (*p) {
+            const char *nl = strchr(p, '\n');
+            int len = nl ? (int)(nl - p) : (int)strlen(p);
+            o = appendf(buf, buflen, o, "- %.*s\n", len, p);
+            p = nl ? nl + 1 : p + len;
+        }
+    }
+    o = appendf(buf, buflen, o, "\n");
 
     /* Bus integrity */
     o = appendf(buf, buflen, o, "Bus integrity (%lu reads):\n", (unsigned long)r->n_reads);
@@ -114,7 +132,7 @@ int boot_diag_format_report(const boot_diag_result_t *r, char *buf, size_t bufle
 
     /* Anomalies */
     if (r->anomaly_flags) {
-        o = appendf(buf, buflen, o, "Anomalies%s:\n", r->fatal ? " (FATAL)" : "");
+        o = appendf(buf, buflen, o, "Anomalies:\n");
         for (int a = 0; a < ANOM_COUNT; a++)
             if (r->anomaly_flags & (1u << a))
                 o = appendf(buf, buflen, o, "- %s\n", boot_diag_anomaly_name((boot_anomaly_t)a));
@@ -188,8 +206,6 @@ static void freeze_result(void) {
     s_result.early_ppi_writes    = bs->early_ppi_writes;
     s_result.basic_workarea_init = bs->basic_workarea_init;
     s_result.passes_run          = s_pass;
-    s_result.fatal               = boot_diag_anomaly_is_fatal(s_anom_accum);
-    s_result.verdict             = boot_diag_verdict(&s_result);
 }
 
 void boot_diag_tick(uint32_t now_ms) {

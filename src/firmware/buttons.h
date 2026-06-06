@@ -6,7 +6,7 @@ typedef enum {
     BTN_NONE,
     BTN_UP,
     BTN_DOWN,
-    BTN_SELECT
+    BTN_SELECT        /* hold-to-fire: buttons_poll emits this only after a ~200 ms hold */
 } btn_event_t;
 
 void        buttons_init(void);

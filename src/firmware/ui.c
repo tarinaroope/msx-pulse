@@ -111,7 +111,7 @@ static void render_top_right_indicator(void) {
 
 static void render_settings_footer(void) {
     if (s_level == UI_LEVEL_SETTINGS) {
-        fb_puts_centered(7, "up/dn  sel=back");
+        fb_puts_centered(7, "up/dn  hold sel=back");
     }
 }
 
@@ -211,29 +211,53 @@ static void render_diag_progress(void) {
     fb_puts(7, 0, "watching native boot");
 }
 
-/* Word-wrap a string into rows lo..7 (21 cols). */
+/* Word-wrap into rows row_lo..7 (21 cols). '\n' forces a line break. */
 static void wrap_rows(const char *msg, int row_lo) {
     char line[22]; int col = 0, row = row_lo; line[0] = '\0';
     const char *w = msg;
     while (*w && row <= 7) {
-        const char *end = w; while (*end && *end != ' ') end++;
+        if (*w == '\n') { fb_puts(row++, 0, line); col = 0; line[0] = '\0'; w++; continue; }
+        if (*w == ' ')  { w++; continue; }
+        const char *end = w; while (*end && *end != ' ' && *end != '\n') end++;
         int wl = (int)(end - w); if (wl > 21) wl = 21;
         if (col > 0 && col + 1 + wl > 21) { fb_puts(row++, 0, line); col = 0; line[0] = '\0'; }
         if (row > 7) break;
         if (col > 0) line[col++] = ' ';
         memcpy(line + col, w, (size_t)wl); col += wl; line[col] = '\0';
-        w = (*end == ' ') ? end + 1 : end;
+        w = end;
     }
     if (col > 0 && row <= 7) fb_puts(row, 0, line);
 }
 
-static void render_diag_verdict(void) {
+static void render_diag_summary(void) {
     const boot_diag_result_t *r = boot_diag_get_result();
-    wrap_rows(boot_diag_verdict_text(r->verdict), 1);
     char line[22];
     snprintf(line, sizeof(line), "%u pass  %lu reads",
              (unsigned)r->passes_run, (unsigned long)r->n_reads);
-    fb_puts(7, 0, line);
+    fb_puts(1, 0, line);
+
+    const char *clk = (r->anomaly_flags & (1u << ANOM_CLK_ABSENT))       ? "ABSENT"
+                    : (r->anomaly_flags & (1u << ANOM_CLK_OUT_OF_RANGE)) ? "off-freq"
+                    : "present";
+    snprintf(line, sizeof(line), "CLK  %s", clk); fb_puts(2, 0, line);
+
+    const char *rst = (r->anomaly_flags & (1u << ANOM_RESET_STUCK)) ? "HELD" : "released";
+    snprintf(line, sizeof(line), "RST  %s", rst); fb_puts(3, 0, line);
+
+    bool bus_issue = r->stuck_data_hi || r->stuck_data_lo || r->stuck_addr_mask
+                  || r->bus_undriven || r->cp_failed;
+    snprintf(line, sizeof(line), "BUS  %s", bus_issue ? "issues (see 2/6)" : "OK");
+    fb_puts(4, 0, line);
+
+    if ((r->phase_flags & 0x1FFu) == 0x1FFu)
+        fb_puts(5, 0, "BOOT complete");
+    else if (r->last_confirmed < 0)
+        fb_puts(5, 0, "BOOT no phases");
+    else {
+        snprintf(line, sizeof(line), "BOOT to %s",
+                 boot_phase_short_name((boot_phase_t)r->last_confirmed));
+        fb_puts(5, 0, line);
+    }
 }
 
 static void append_bit_names(char *out, size_t cap, char letter, uint32_t mask, int nbits) {
@@ -289,8 +313,11 @@ static void render_diag_phases_range(int lo, int hi) {
 static void render_diag_phases_lo(void) { render_diag_phases_range(0, 4); }
 static void render_diag_phases_hi(void) { render_diag_phases_range(5, 8); }
 
-static void render_diag_diagnosis(void) {
-    wrap_rows(boot_detect_failure_category_passive(), 1);
+static void render_diag_causes(void) {
+    const boot_diag_result_t *r = boot_diag_get_result();
+    char buf[400];
+    boot_diag_possible_causes(r, buf, sizeof(buf));
+    wrap_rows(buf, 1);   /* wrap_rows honors '\n' between findings */
 }
 
 void ui_init(void) {
@@ -311,8 +338,10 @@ void ui_handle_btn(btn_event_t e) {
     if (s_diag_view == DV_RESULTS) {
         if (e == BTN_DOWN) { if (s_diag_page + 1u < N_DIAG_PAGES) s_diag_page++; }
         else if (e == BTN_UP) { if (s_diag_page > 0) s_diag_page--; }
-        else if (e == BTN_SELECT) {
-            s_diag_view = DV_NONE; s_level = UI_LEVEL_MAIN; s_page_idx = 0;
+        else if (e == BTN_SELECT) {         /* SELECT is hold-to-fire in buttons.c   */
+            s_diag_view = DV_NONE;          /* (~200 ms), so a brief GP44 flash-CS    */
+            s_level     = UI_LEVEL_MAIN;    /* phantom pulse can't reach here and exit.*/
+            s_page_idx  = 0;
         }
         return;
     }
@@ -370,21 +399,21 @@ void ui_render(uint32_t now_ms, const rail_snapshot_t *rails) {
     }
     if (s_diag_view == DV_RESULTS) {
         static const char *titles[N_DIAG_PAGES] =
-            { "Verdict", "Bus+Data", "Anomalies", "Phases 1-5", "Phases 6-9", "Diagnosis" };
+            { "Summary", "Bus+Data", "Anomalies", "Phases 1-5", "Phases 6-9", "Poss.cause" };
         fb_puts(0, 2 * CHAR_W, titles[s_diag_page]);
         char ind[8];
         snprintf(ind, sizeof(ind), "%u/%u", (unsigned)(s_diag_page + 1u), (unsigned)N_DIAG_PAGES);
         int x = OLED_W - (int)strlen(ind) * CHAR_W; if (x < 0) x = 0;
         fb_puts(0, x, ind);
         switch (s_diag_page) {
-            case 0:  render_diag_verdict();    break;
+            case 0:  render_diag_summary();    break;
             case 1:  render_diag_bus();        break;
             case 2:  render_diag_anomalies();  break;
             case 3:  render_diag_phases_lo();  break;
             case 4:  render_diag_phases_hi();  break;
-            default: render_diag_diagnosis();  break;
+            default: render_diag_causes();     break;
         }
-        if (s_diag_page != 0) fb_puts(7, 0, "sel=exit  up/dn");
+        fb_puts(7, 0, "up/dn  hold sel=exit");
         return;
     }
 

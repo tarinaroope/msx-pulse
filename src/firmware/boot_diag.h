@@ -24,21 +24,6 @@ typedef enum {
     ANOM_COUNT            = 5
 } boot_anomaly_t;
 
-/* Fused component-level verdict (the headline). */
-typedef enum {
-    VERDICT_OK            = 0,  /* CPU/RAM/ROM/BASIC path OK (VDP/PSG/kbd unproven) */
-    VERDICT_CLOCK         = 1,
-    VERDICT_RESET         = 2,
-    VERDICT_CPU_OR_DECODE = 3,  /* clock OK, no bus cycles */
-    VERDICT_DATA_LINE     = 4,  /* stuck data bit (named)  */
-    VERDICT_ROM_NO_DRIVE  = 5,  /* bus undriven on reads   */
-    VERDICT_ROM_DATA      = 6,  /* opcode checkpoint mismatch */
-    VERDICT_ADDR_LINE     = 7,  /* stuck address bit (named) */
-    VERDICT_RAM_PATH      = 8,  /* stalled at slot/RAM probe */
-    VERDICT_BOOT_STALL    = 9,  /* stalled mid-boot, data OK */
-    VERDICT_COUNT         = 10
-} boot_verdict_t;
-
 /* Round phases (Core-0 state machine + UI progress view). */
 typedef enum {
     BOOT_DIAG_IDLE = 0, BOOT_DIAG_PASS_BEGIN, BOOT_DIAG_CAPTURING,
@@ -63,20 +48,18 @@ typedef struct {
     int8_t   first_missing;
     bool     early_ppi_writes;
     bool     basic_workarea_init;
-    /* round bookkeeping + fused output */
+    /* round bookkeeping */
     uint8_t  passes_run;
-    bool     fatal;
-    boot_verdict_t verdict;
 } boot_diag_result_t;
 
 /* Pure layer. */
 void  boot_diag_classify_anomalies(const bus_probe_snapshot_t *s, uint32_t events,
                                    boot_diag_result_t *r);  /* sets anomaly_flags */
-bool  boot_diag_anomaly_is_fatal(uint16_t anomaly_flags);
 bool  boot_diag_round_should_stop(uint16_t phase_flags, uint16_t anomaly_flags);
-/* Fuse all layers of a populated result into a verdict code (top-down rules). */
-boot_verdict_t boot_diag_verdict(const boot_diag_result_t *r);
-const char *boot_diag_verdict_text(boot_verdict_t v);
+/* Demoted interpretation (NOT a verdict, NOT a precedence chain): every finding
+ * present in the result contributes its own newline-terminated hint line, so one
+ * observation never masks another. Writes into buf; returns chars written. */
+int boot_diag_possible_causes(const boot_diag_result_t *r, char *buf, size_t buflen);
 const char *boot_diag_anomaly_name(boot_anomaly_t a);
 int   boot_diag_format_report(const boot_diag_result_t *r, char *buf, size_t buflen);
 
